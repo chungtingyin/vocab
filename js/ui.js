@@ -192,6 +192,20 @@ export function attachSwipe(el, { onSwipe, onTap }) {
   let swiping = false;
   let suppressClick = false;
 
+  // pan-y 會讓斜斜的滑動被瀏覽器當成上下捲動而取消；沒東西可捲時就把手勢全交給滑動。
+  // 外層容器會捲（測驗）就一律保留上下捲動，因為外層內容變動時這裡不會知道
+  const scrolls = (node) => /auto|scroll/.test(getComputedStyle(node).overflowY);
+  const canScroll = () => {
+    if (scrolls(el) && el.scrollHeight > el.clientHeight) return true;
+    for (let node = el.parentElement; node && node !== document.body; node = node.parentElement) {
+      if (scrolls(node)) return true;
+    }
+    return false;
+  };
+  const fit = () => { el.style.touchAction = canScroll() ? '' : 'none'; };
+  new ResizeObserver(fit).observe(el);
+  new MutationObserver(fit).observe(el, { childList: true, subtree: true });
+
   el.addEventListener('pointerdown', (e) => {
     start = { x: e.clientX, y: e.clientY };
     swiping = false;
