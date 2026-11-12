@@ -294,6 +294,7 @@ export async function settingsView(id) {
         h('p', {}, h('strong', {}, '完整表格：'), `欄位設定和全部 ${rows.length} 筆資料，可用來備份或搬到其他裝置。測驗紀錄在紀錄頁另外匯出。`),
       ],
       actions: [
+        { label: '取消', value: undefined },
         { label: '匯出格式', value: 'template' },
         { label: '完整表格', value: 'full', primary: true },
       ],

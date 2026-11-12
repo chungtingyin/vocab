@@ -572,7 +572,7 @@ export async function recordView(id, recordId) {
     topbar('', () => go(`#/table/${id}/quiz/records`),
       h('div', { class: 'qz-head-actions' },
         h('button', { type: 'button', class: 'btn btn-small', onclick: () => exportRecord(record) }, '匯出'),
-        h('button', { type: 'button', class: 'btn btn-small', 'aria-label': 'Flash Card 複習', onclick: review }, icon('f', 14), '複習'),
+        h('button', { type: 'button', class: 'btn btn-small', onclick: review }, '複習'),
         h('button', { type: 'button', class: 'btn btn-small', onclick: () => retest(record.questions, '（重測）') }, '整份重測'))),
     h('div', { class: 'qz-title' }, h('h1', {}, record.name), scoreLine, retestWrong),
     wrap);

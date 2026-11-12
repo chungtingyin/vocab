@@ -184,13 +184,12 @@ function isEmpty(value) {
 export function faceContent(fields, row) {
   const filled = fields.map((f) => ({ f, value: renderValue(f, row) })).filter((x) => !isEmpty(x.value));
   if (!filled.length) return h('p', { class: 'fc-empty' }, '（沒有內容）');
-  return filled.map(({ f, value }, i) => {
-    const length = typeof value === 'string' ? value.length : 0;
-    const size = i > 0 ? 'fc-text' : length <= 8 ? 'fc-text fc-big' : length <= 24 ? 'fc-text fc-mid' : 'fc-text';
-    return h('div', { class: 'fc-item' },
-      filled.length > 1 ? h('p', { class: 'fc-name' }, f.name) : null,
-      h('div', { class: size }, value));
-  });
+  // 所有欄位用同一個字級，依最長的內容決定
+  const length = Math.max(...filled.map(({ value }) => (typeof value === 'string' ? value.length : 0)));
+  const size = length <= 8 ? 'fc-text fc-big' : length <= 24 ? 'fc-text fc-mid' : 'fc-text';
+  return filled.map(({ f, value }) => h('div', { class: 'fc-item' },
+    h('p', { class: 'fc-name' }, f.name),
+    h('div', { class: size }, value)));
 }
 
 export async function flashcardPlayView(id) {
@@ -232,10 +231,7 @@ export async function flashcardPlayView(id) {
 
   function renderFace(card) {
     card.classList.toggle('back', flipped);
-    card.replaceChildren(
-      h('span', { class: 'fc-face' }, flipped ? '背面' : '正面'),
-      h('div', { class: 'fc-content' }, faceContent(flipped ? back : front, cards[index])),
-    );
+    card.replaceChildren(h('div', { class: 'fc-content' }, faceContent(flipped ? back : front, cards[index])));
   }
 
   function cardElement() {
