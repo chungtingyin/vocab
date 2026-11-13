@@ -1,11 +1,11 @@
 // 測驗：設定頁、作答頁、紀錄總覽、單次紀錄
 
 import { addRecord, addRecords, deleteRecord, getRecord, getTable, listRecords, listRows, saveTable } from './db.js';
-import { fieldText, formatDate, keyField } from './model.js';
+import { fieldText, formatDate, keyField, normalizeText as normalize } from './model.js';
 import { checkbox, faceContent, pickTags, shuffle, startFlashSession } from './flashcard.js';
 import { allTags, sortRows, stateFor } from './rows.js';
 import { exportRecords, parseRecords, readJsonFile } from './transfer.js';
-import { askDeleteWithDownloads, attachSwipe, confirmDialog, go, h, icon, openDialog, pickFile, topbar } from './ui.js';
+import { askDeleteWithDownloads, attachSwipe, go, h, icon, openDialog, pickFile, toast, topbar } from './ui.js';
 
 // 作答中的考卷只放在記憶體，重新整理後會回到設定頁
 let session = null;
@@ -25,10 +25,6 @@ function loadSettings(table, tags) {
   if (!ids.has(settings.back)) settings.back = null;
   settings.tags = settings.tags.filter((t) => tags.includes(t));
   return settings;
-}
-
-function normalize(text) {
-  return String(text).normalize('NFKC').trim().toLowerCase();
 }
 
 // 回答以「、」「;」分隔時，答對其中一個就算對
@@ -182,6 +178,7 @@ export async function quizSetupView(id) {
       questions: ordered.slice(0, wanted).map((r) => buildQuestion(r, table, front, back, pool, settings.mode)),
     };
     go(`#/table/${id}/quiz/play`);
+    if (wanted > ordered.length) toast(`只有 ${ordered.length} 題符合，全部出題`);
     return undefined;
   }
 
@@ -340,13 +337,16 @@ export async function quizPlayView(id) {
   render();
 
   const view = h('div', { class: 'view' },
-    topbar(current.name, async () => {
-      if (!(await confirmDialog('離開測驗？', '這次的作答不會保存。', '離開'))) return;
-      session = null;
-      go(`#/table/${id}`);
-    }, timer),
+    topbar(current.name, () => go(current.backHash ?? `#/table/${id}`), timer),
     stage,
     h('footer', { class: 'footer' }, prev, counter, next));
+  view.leaveGuard = {
+    isDirty: () => session === current,
+    title: '離開測驗？',
+    message: '這次的作答不會保存。',
+    okLabel: '離開',
+    onLeave: () => { session = null; },
+  };
 
   const tick = setInterval(() => {
     if (!view.isConnected) {
@@ -373,6 +373,11 @@ function exportRecord(record) {
   exportRecords(record.name, [record]);
 }
 
+// 匯入的紀錄編號是匯入順序，所以照交卷時間排
+function newestFirst(records) {
+  return records.sort((a, b) => b.finishedAt.localeCompare(a.finishedAt) || b.id - a.id);
+}
+
 function formatTime(iso) {
   const d = new Date(iso);
   const pad = (n) => String(n).padStart(2, '0');
@@ -383,7 +388,7 @@ export async function recordsView(id) {
   const table = await getTable(id);
   if (!table) return null;
   document.title = `測驗紀錄 - ${table.title}`;
-  let records = (await listRecords(id)).sort((a, b) => b.id - a.id);
+  let records = newestFirst(await listRecords(id));
   let deleting = false;
 
   const wrap = h('div', { class: 'table-wrap qz-records' });
@@ -416,7 +421,7 @@ export async function recordsView(id) {
         return true;
       });
       await addRecords(id, fresh);
-      records = (await listRecords(id)).sort((a, b) => b.id - a.id);
+      records = newestFirst(await listRecords(id));
       render();
       const duplicates = parsed.records.length - fresh.length;
       await openDialog({
@@ -494,10 +499,11 @@ export async function recordsView(id) {
       exportButton));
 }
 
-function retestSession(record, questions, suffix) {
+function retestSession(record, questions, suffix, backHash) {
   const order = record.order === 'random' ? shuffle(questions) : questions;
   return {
     tableId: record.tableId,
+    backHash,
     name: `${record.name.replace(/（(錯題)?重測）$/, '')}${suffix}`,
     mode: record.mode,
     order: record.order,
@@ -522,7 +528,7 @@ export async function recordView(id, recordId) {
   const retestWrong = h('div', { class: 'qz-record-actions' });
 
   function retest(questions, suffix) {
-    session = retestSession(record, questions, suffix);
+    session = retestSession(record, questions, suffix, self);
     go(`#/table/${id}/quiz/play`);
   }
 
@@ -546,7 +552,12 @@ export async function recordView(id, recordId) {
   }
 
   function resultCell(q) {
-    if (q.correct) return h('td', {}, h('span', { class: 'qz-mark' }, icon('check', 14), '正確'));
+    if (q.correct) {
+      const differs = record.mode === 'fill' && normalize(q.userAnswer) !== normalize(q.answer);
+      return h('td', {},
+        h('span', { class: 'qz-mark' }, icon('check', 14), '正確'),
+        differs ? h('p', { class: 'qz-user' }, `你的答案：${q.userAnswer}`) : null);
+    }
     return h('td', { class: 'qz-wrong' },
       h('span', { class: 'qz-mark' }, icon('close', 12), '錯誤'),
       h('p', { class: 'qz-user' }, normalize(q.userAnswer) ? `你的答案：${q.userAnswer}` : '沒有作答'));

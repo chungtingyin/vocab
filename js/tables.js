@@ -18,6 +18,7 @@ export async function homeView() {
 
   const tiles = h('div', { class: 'tiles' });
   const hint = h('p', { class: 'home-hint', hidden: true }, '點選要刪除的表格，再按一次筆形按鈕結束');
+  const empty = h('p', { class: 'home-empty', hidden: true }, '還沒有表格，點 ＋ 建立第一張');
   const pencil = h('button', {
     type: 'button',
     class: 'icon-btn',
@@ -53,6 +54,7 @@ export async function homeView() {
     pencil.classList.toggle('active', deleting);
     pencil.disabled = !tables.length;
     hint.hidden = !deleting;
+    empty.hidden = tables.length > 0;
     tiles.replaceChildren(
       ...tables.map(tile),
       ...(deleting ? [] : [h('button', { type: 'button', class: 'tile tile-add', 'aria-label': '新增表格', onclick: () => go('#/new') },
@@ -69,5 +71,5 @@ export async function homeView() {
         h('button', { type: 'button', class: 'icon-btn', 'aria-label': '切換深色模式', onclick: toggleTheme }, icon('theme')))),
     h('div', { class: 'dither' }),
     hint,
-    h('div', { class: 'scroll' }, tiles));
+    h('div', { class: 'scroll' }, empty, tiles));
 }

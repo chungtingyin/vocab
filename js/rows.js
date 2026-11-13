@@ -1,7 +1,7 @@
 // 主畫面（表格）與新增／編輯頁
 
 import { addRows, deleteRows, getRow, getTable, listRows, putRows } from './db.js';
-import { coerceValue, fieldText, fieldValue, formatDate, keyField, keyOf, parseTags } from './model.js';
+import { coerceValue, fieldText, fieldValue, formatDate, keyField, keyOf, normalizeText, parseTags } from './model.js';
 import { parseRows, readJsonFile } from './transfer.js';
 import { confirmDialog, go, h, icon, openDialog, pickFile, toast, topbar } from './ui.js';
 
@@ -51,7 +51,7 @@ export function sortRows(rows, table, sort) {
 
 function matches(row, table, query) {
   if (!query) return true;
-  return table.fields.some((f) => fieldText(f, row).toLowerCase().includes(query));
+  return table.fields.some((f) => normalizeText(fieldText(f, row)).includes(query));
 }
 
 export async function mainView(id) {
@@ -60,7 +60,10 @@ export async function mainView(id) {
   document.title = `${table.title} - vocab`;
   let rows = await listRows(id);
   const state = stateFor(id);
-  let expanded = null;
+  // 從編輯頁回來時，展開並捲到剛剛那一筆
+  let expanded = rows.some((r) => r.id === state.lastRowId) ? state.lastRowId : null;
+  const reveal = expanded;
+  state.lastRowId = null;
   let selecting = false;
   const selected = new Set();
 
@@ -71,7 +74,7 @@ export async function mainView(id) {
   const actionBar = h('footer', { class: 'footer action-bar', hidden: true });
 
   const visibleRows = () => sortRows(
-    rows.filter((r) => matches(r, table, state.query.trim().toLowerCase()) && (!state.tag || r.tags?.includes(state.tag))),
+    rows.filter((r) => matches(r, table, normalizeText(state.query)) && (!state.tag || r.tags?.includes(state.tag))),
     table,
     state.sort,
   );
@@ -160,6 +163,7 @@ export async function mainView(id) {
       };
       const tr = h('tr', {
         class: isSelected ? 'data-row selected' : 'data-row',
+        'data-id': row.id,
         tabIndex: 0,
         'aria-expanded': selecting ? null : String(expanded === row.id),
         onclick: toggle,
@@ -241,6 +245,9 @@ export async function mainView(id) {
 
   renderToolbar();
   renderTable();
+  if (reveal !== null) {
+    requestAnimationFrame(() => wrap.querySelector(`[data-id="${reveal}"]`)?.scrollIntoView({ block: 'center' }));
+  }
 
   return h('div', { class: 'view' },
     h('header', { class: 'main-head' },
@@ -306,15 +313,17 @@ export async function rowFormView(id, rowId = null) {
   if (rowId && (!row || row.tableId !== id)) return null;
   document.title = `${row ? '編輯' : '新增'} - ${table.title}`;
   const back = `#/table/${id}`;
+  if (row) stateFor(id).lastRowId = row.id;
   const fields = table.fields.filter((f) => f.type !== 'createdAt');
   const inputs = new Map();
   const messages = new Map();
 
-  function chips(input) {
-    return listRows(id).then((rows) => {
-      const tags = allTags(rows);
-      if (!tags.length) return null;
-      return h('div', { class: 'tag-picker' }, tags.map((t) => h('button', {
+  const pickers = [];
+  async function renderChips() {
+    const tags = allTags(await listRows(id));
+    for (const { picker, input } of pickers) {
+      picker.hidden = !tags.length;
+      picker.replaceChildren(...tags.map((t) => h('button', {
         type: 'button',
         class: 'tag tag-btn',
         onclick: () => {
@@ -322,7 +331,7 @@ export async function rowFormView(id, rowId = null) {
           input.value = (current.includes(t) ? current.filter((x) => x !== t) : [...current, t]).join('、');
         },
       }, t)));
-    });
+    }
   }
 
   const form = h('div', { class: 'form' });
@@ -332,15 +341,28 @@ export async function rowFormView(id, rowId = null) {
       ? h('input', { type: 'text', class: 'input', value: row ? initial.join('、') : '', placeholder: '多個標籤用頓號或逗號分隔' })
       : fieldInput(f, initial);
     const message = h('p', { class: 'error', hidden: true });
+    input.addEventListener('input', () => {
+      message.hidden = true;
+      input.classList.remove('invalid');
+    });
+    // 單行欄位按 Enter 送出；多行文字按 Enter 換行，要用 ⌘／Ctrl + Enter
+    input.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.isComposing) return;
+      if (input.tagName === 'TEXTAREA' && !e.metaKey && !e.ctrlKey) return;
+      e.preventDefault();
+      save();
+    });
     inputs.set(f, input);
     messages.set(f, message);
     const label = `${f.required ? '*' : ''}${f.name}`;
     form.append(h('label', { class: 'row-input' }, h('span', {}, label), input), message);
     if (f.type === 'tags') {
-      const picker = await chips(input);
-      if (picker) form.append(picker);
+      const picker = h('div', { class: 'tag-picker', hidden: true });
+      pickers.push({ picker, input });
+      form.append(picker);
     }
   }
+  await renderChips();
 
   const snapshot = () => JSON.stringify([...inputs.values()].map((i) => i.value));
   let initial = snapshot();
@@ -378,7 +400,7 @@ export async function rowFormView(id, rowId = null) {
     if (!next) return;
     if (row) {
       await putRows([{ ...row, ...next }]);
-      go(back);
+      go(back, { force: true });
       return;
     }
     const key = keyField(table.fields);
@@ -392,6 +414,7 @@ export async function rowFormView(id, rowId = null) {
       if (input.tagName === 'TEXTAREA') input.style.height = '';
     }
     initial = snapshot();
+    renderChips();
     [...inputs.values()][0].focus();
   }
 
@@ -402,18 +425,14 @@ export async function rowFormView(id, rowId = null) {
       const report = parseRows(table.fields, await readJsonFile(file), await listRows(id));
       await addRows(id, report.rows);
       await showImportReport(report);
-      if (report.rows.length) go(back);
+      if (report.rows.length) go(back, { force: true });
     } catch (e) {
       openDialog({ title: '無法匯入', body: [h('p', {}, e.message)] });
     }
   }
 
-  async function leave() {
-    if (snapshot() === initial || await confirmDialog('要離開嗎？', '還沒按「確定」的內容不會保存。', '捨棄並離開')) go(back);
-  }
-
-  return h('div', { class: 'view' },
-    topbar(row ? '編輯' : `新增到「${table.title}」`, leave),
+  const view = h('div', { class: 'view' },
+    topbar(row ? '編輯' : `新增到「${table.title}」`, () => go(back)),
     h('div', { class: 'scroll' }, form),
     h('footer', { class: 'footer' },
       row
@@ -423,9 +442,16 @@ export async function rowFormView(id, rowId = null) {
           onclick: async () => {
             if (!(await confirmDialog('刪除這筆資料？', '刪除後無法復原。', '刪除'))) return;
             await deleteRows([row.id]);
-            go(back);
+            go(back, { force: true });
           },
         }, '刪除')
         : h('button', { type: 'button', class: 'btn', onclick: importRows }, '匯入'),
       h('button', { type: 'button', class: 'btn btn-primary', onclick: save }, '確定')));
+  view.leaveGuard = {
+    isDirty: () => snapshot() !== initial,
+    title: '要離開嗎？',
+    message: '還沒按「確定」的內容不會保存。',
+    okLabel: '捨棄並離開',
+  };
+  return view;
 }

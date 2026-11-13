@@ -13,8 +13,18 @@ export function h(tag, props = {}, ...kids) {
   return el;
 }
 
-export function go(hash) {
+let forced = false;
+
+// force：已經存檔或刪除，不必再問要不要離開
+export function go(hash, { force = false } = {}) {
+  if (force && location.hash !== hash) forced = true;
   location.hash = hash;
+}
+
+export function takeForcedNavigation() {
+  const was = forced;
+  forced = false;
+  return was;
 }
 
 const SVG = 'http://www.w3.org/2000/svg';

@@ -3,7 +3,7 @@ import { flashcardPlayView, flashcardSetupView } from './flashcard.js';
 import { mainView, rowFormView } from './rows.js';
 import { quizPlayView, quizSetupView, recordView, recordsView } from './quiz.js';
 import { homeView } from './tables.js';
-import { applyStoredTheme, go, h } from './ui.js';
+import { applyStoredTheme, confirmDialog, go, h, takeForcedNavigation } from './ui.js';
 
 const routes = [
   [/^#\/new$/, () => newTableView()],
@@ -44,6 +44,38 @@ async function render() {
   }
 }
 
+// 畫面可以設定 view.leaveGuard = { isDirty, title, message, okLabel, onLeave }，
+// 瀏覽器的上一頁、下一頁和 App 內的返回鍵都會先問過
+const guardOf = () => root.firstElementChild?.leaveGuard;
+let currentHash = location.hash;
+let leaving = false;
+let asking = false;
+
+addEventListener('hashchange', async () => {
+  const guard = guardOf();
+  if (takeForcedNavigation() || leaving || !guard?.isDirty()) {
+    leaving = false;
+    currentHash = location.hash;
+    render();
+    return;
+  }
+  // 網址已經換了，先放回原本的頁面；確定離開後再退回剛剛要去的那一頁
+  history.pushState(null, '', currentHash || '#');
+  if (asking) return;
+  asking = true;
+  const ok = await confirmDialog(guard.title, guard.message, guard.okLabel);
+  asking = false;
+  if (!ok) return;
+  guard.onLeave?.();
+  leaving = true;
+  history.back();
+});
+
+addEventListener('beforeunload', (e) => {
+  if (!guardOf()?.isDirty()) return;
+  e.preventDefault();
+  e.returnValue = '';
+});
+
 applyStoredTheme();
-addEventListener('hashchange', render);
 render();

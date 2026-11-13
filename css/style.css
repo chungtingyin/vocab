@@ -167,6 +167,8 @@ select.input {
 .tile-deleting { border-style: double; border-width: 6px; box-shadow: none; }
 .tile-deleting:active { transform: none; background: var(--ink); color: var(--paper); }
 .tile-badge { position: absolute; top: 0; right: 0; display: flex; padding: 5px; background: var(--ink); color: var(--paper); }
+.home-empty { padding: 24px 20px 0; font-weight: 700; }
+.home-empty:not([hidden]) + .tiles { padding-top: 16px; }
 .tile-add { border-style: dashed; box-shadow: none; }
 .tile-add:active { transform: none; background: var(--ink); color: var(--paper); }
 
@@ -254,8 +256,9 @@ select.input {
 .input-small { flex: 0 1 160px; width: auto; min-height: 36px; padding-top: 4px; padding-bottom: 4px; font-size: 14px; }
 .count { font-size: 14px; white-space: nowrap; }
 
-.table-wrap { flex: 0 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; margin: 0 16px 16px; }
-.table-wrap:has(table) { border: 2px solid var(--ink); }
+/* 外框畫在表格上，旁邊的留白算在捲動區裡，手指放在表格旁邊也捲得動 */
+.table-wrap { flex: 0 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 0 16px 16px; }
+.table-wrap > table { border: 2px solid var(--ink); }
 table { width: 100%; border-collapse: separate; border-spacing: 0; }
 th, td { min-width: 5.5em; border-right: 2px solid var(--ink); border-bottom: 2px solid var(--ink); text-align: left; vertical-align: top; }
 tr > :last-child { border-right: 0; }
@@ -370,7 +373,7 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .qz-number { flex: none; width: 1.4em; font-weight: 700; text-align: center; }
 .qz-fill { margin: 16px 0; text-align: center; }
 .qz-records-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding-top: 14px; }
-.qz-records { margin-bottom: 14px; }
+.qz-records { padding-bottom: 14px; }
 .th-text { display: block; padding: 9px 10px; font-weight: 700; }
 th.col-action, td.col-action { width: 56px; min-width: 56px; }
 td.col-action { padding: 5px 6px; }

@@ -1,7 +1,7 @@
 // 新增表格和 ∗ 設定頁共用的表單
 
 import { createTable, deleteTable, getTable, listRecords, listRows, saveTable } from './db.js';
-import { FIELD_TYPES, blankField, blankFields, validateFields, vocabFields } from './model.js';
+import { FIELD_TYPES, blankField, blankFields, coerceValue, validateFields, vocabFields } from './model.js';
 import { buildTemplate, downloadJson, exportFullTable, parseRecords, parseRows, parseTableFile, readJsonFile, tableDownloads } from './transfer.js';
 import { askDeleteWithDownloads, confirmDialog, go, h, icon, openDialog, pickFile, toast, topbar } from './ui.js';
 
@@ -83,8 +83,15 @@ function fieldEditor(initial, confirmRemove) {
     }, icon(f.showInList ? 'eye' : 'eyeOff', 22));
   }
 
+  // 開始修改就拿掉這一格的錯誤提示，按確定時再重新檢查
+  function clearError(f, key, input, message) {
+    if (errors[f.id]) delete errors[f.id][key];
+    input.classList.remove('invalid');
+    message?.remove();
+  }
+
   function textRow(label, f, key, placeholder, disabled) {
-    const message = errors[f.id]?.[key];
+    const message = errors[f.id]?.[key] ? h('p', { class: 'error' }, errors[f.id][key]) : null;
     return [
       h('label', { class: 'row-input' },
         h('span', {}, label),
@@ -95,9 +102,12 @@ function fieldEditor(initial, confirmRemove) {
           placeholder,
           disabled,
           autocapitalize: 'off',
-          oninput: (e) => { f[key] = e.target.value; },
+          oninput: (e) => {
+            f[key] = e.target.value;
+            clearError(f, key, e.target, message);
+          },
         })),
-      ...(message ? [h('p', { class: 'error' }, message)] : []),
+      message,
     ];
   }
 
@@ -105,15 +115,19 @@ function fieldEditor(initial, confirmRemove) {
     const el = h('div', { class: f.system ? 'field-card system' : 'field-card', 'data-id': f.id });
     const head = h('div', { class: 'field-head' }, eyeToggle(f), dragHandle(el, f));
     if (f.system) {
+      const message = errors[f.id]?.name ? h('p', { class: 'error' }, errors[f.id].name) : null;
       el.append(head);
+      if (message) el.append(message);
       head.append(h('input', {
         type: 'text',
-        class: errors[f.id]?.name ? 'input invalid' : 'input',
+        class: message ? 'input invalid' : 'input',
         value: f.name,
         'aria-label': '系統欄位名稱',
-        oninput: (e) => { f.name = e.target.value; },
+        oninput: (e) => {
+          f.name = e.target.value;
+          clearError(f, 'name', e.target, message);
+        },
       }), h('span', { class: 'badge' }, '系統'));
-      if (errors[f.id]?.name) el.append(h('p', { class: 'error' }, errors[f.id].name));
       return el;
     }
     head.append(
@@ -187,8 +201,18 @@ function fieldEditor(initial, confirmRemove) {
 }
 
 function tableForm(table, editor) {
-  const title = h('input', { type: 'text', class: 'input', id: 'table-title', value: table.title, placeholder: '例：日文' });
   const titleError = h('p', { class: 'error', hidden: true }, '請輸入標題');
+  const title = h('input', {
+    type: 'text',
+    class: 'input',
+    id: 'table-title',
+    value: table.title,
+    placeholder: '例：日文',
+    oninput: () => {
+      titleError.hidden = true;
+      title.classList.remove('invalid');
+    },
+  });
   const description = h('input', { type: 'text', class: 'input', value: table.description, placeholder: '沒有填寫就不會顯示' });
   return {
     el: h('div', { class: 'form-top' },
@@ -211,15 +235,41 @@ function tableForm(table, editor) {
   };
 }
 
-async function leaveIfClean(isDirty, hash) {
-  if (!isDirty() || await confirmDialog('要離開嗎？', '還沒按「確定」的變更不會保存。', '捨棄並離開')) go(hash);
+function guardForm(view, form) {
+  const initial = JSON.stringify(form.get());
+  view.leaveGuard = {
+    isDirty: () => JSON.stringify(form.get()) !== initial,
+    title: '要離開嗎？',
+    message: '還沒按「確定」的變更不會保存。',
+    okLabel: '捨棄並離開',
+  };
+  return view;
+}
+
+// 改屬性前先檢查舊資料能不能轉換；能轉的就一起轉，例如文字「12」變成數字 12
+function convertTypes(before, after, rows) {
+  const changed = after.filter((f) => !f.system && before.some((b) => b.id === f.id && b.type !== f.type));
+  const bad = [];
+  for (const f of changed) {
+    const values = rows.map((r) => r.values[f.id]).filter((v) => v !== undefined);
+    const wrong = values.filter((v) => coerceValue({ ...f, required: false }, v).error);
+    if (wrong.length) bad.push({ f, wrong });
+  }
+  const convert = (row) => {
+    for (const f of changed) {
+      if (!Object.hasOwn(row.values, f.id)) continue;
+      const { value } = coerceValue({ ...f, required: false }, row.values[f.id]);
+      if (value === '') delete row.values[f.id];
+      else row.values[f.id] = value;
+    }
+  };
+  return { bad, convert: changed.length ? convert : null };
 }
 
 export async function newTableView() {
   document.title = '新增表格 - vocab';
   const editor = fieldEditor(blankFields(), async () => true);
   const form = tableForm({ title: '', description: '' }, editor);
-  const initial = JSON.stringify(form.get());
 
   async function importTable() {
     const file = await pickFile();
@@ -238,14 +288,14 @@ export async function newTableView() {
         '建立');
       if (!ok) return;
       const id = await createTable({ ...draft, createdAt: new Date().toISOString() }, report.rows, records);
-      go(`#/table/${id}`);
+      go(`#/table/${id}`, { force: true });
     } catch (e) {
       openDialog({ title: '無法匯入', body: [h('p', {}, e.message)] });
     }
   }
 
-  return h('div', { class: 'view' },
-    topbar('新增表格', () => leaveIfClean(() => JSON.stringify(form.get()) !== initial, '#/')),
+  return guardForm(h('div', { class: 'view' },
+    topbar('新增表格', () => go('#/')),
     h('div', { class: 'scroll' },
       h('div', { class: 'form' },
         form.el,
@@ -261,9 +311,9 @@ export async function newTableView() {
         onclick: async () => {
           if (!form.validate()) return;
           const id = await createTable({ ...form.get(), createdAt: new Date().toISOString() });
-          go(`#/table/${id}`);
+          go(`#/table/${id}`, { force: true });
         },
-      }, '確定')));
+      }, '確定'))), form);
 }
 
 export async function settingsView(id) {
@@ -281,7 +331,6 @@ export async function settingsView(id) {
       '刪除欄位');
   });
   const form = tableForm(table, editor);
-  const initial = JSON.stringify(form.get());
   const back = `#/table/${id}`;
 
   async function exportFile() {
@@ -303,8 +352,8 @@ export async function settingsView(id) {
     if (choice === 'full') exportFullTable(draft, rows);
   }
 
-  return h('div', { class: 'view' },
-    topbar('設定', () => leaveIfClean(() => JSON.stringify(form.get()) !== initial, back)),
+  return guardForm(h('div', { class: 'view' },
+    topbar('設定', () => go(back)),
     h('div', { class: 'scroll' },
       h('div', { class: 'form' },
         form.el,
@@ -320,7 +369,7 @@ export async function settingsView(id) {
             );
             if (!ok) return;
             await deleteTable(id);
-            go('#/');
+            go('#/', { force: true });
           },
         }, '刪除表格'))),
     h('footer', { class: 'footer' },
@@ -331,10 +380,27 @@ export async function settingsView(id) {
         onclick: async () => {
           if (!form.validate()) return;
           const next = { ...table, ...form.get() };
+          const { bad, convert } = convertTypes(table.fields, next.fields, rows);
+          if (bad.length) {
+            openDialog({
+              title: '無法修改屬性',
+              body: [
+                ...bad.map(({ f, wrong }) => h('p', {},
+                  `有 ${wrong.length} 筆資料的「${f.name}」不是${FIELD_TYPES[f.type]}，例如：${wrong.slice(0, 3).join('、')}。`)),
+                h('p', {}, '請先修改這些資料，或保留原本的屬性。'),
+              ],
+            });
+            return;
+          }
           const nextIds = new Set(next.fields.map((f) => f.id));
-          await saveTable(next, [...savedIds].filter((x) => !nextIds.has(x)));
-          go(back);
+          const removed = [...savedIds].filter((x) => !nextIds.has(x));
+          const updateRow = removed.length || convert ? (row) => {
+            for (const fieldId of removed) delete row.values[fieldId];
+            convert?.(row);
+          } : null;
+          await saveTable(next, updateRow);
+          go(back, { force: true });
         },
-      }, '確定')));
+      }, '確定'))), form);
 }
 

@@ -93,6 +93,11 @@ export function parseTags(raw) {
   return [...new Set(list.map((t) => String(t ?? '').trim()).filter(Boolean))];
 }
 
+// 比對用：全形半形、大小寫視為相同
+export function normalizeText(text) {
+  return String(text).normalize('NFKC').trim().toLowerCase();
+}
+
 export function formatDate(iso) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';

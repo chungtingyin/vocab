@@ -5,13 +5,31 @@ import { coerceValue, fieldValue, formatDate, keyField, keyOf, newId, parseTags,
 const APP = 'vocab';
 const VERSION = 1;
 
+// Flash Card 和測驗設定裡記的是欄位 id，檔案裡改用代號；map 把一種換成另一種
+function mapSettings(settings, map) {
+  if (typeof settings !== 'object' || settings === null) return undefined;
+  const one = (x) => map.get(x) ?? null;
+  const many = (list) => (Array.isArray(list) ? list.map(one).filter(Boolean) : []);
+  return {
+    front: many(settings.front),
+    back: Array.isArray(settings.back) ? many(settings.back) : one(settings.back),
+    count: typeof settings.count === 'string' ? settings.count : '',
+    tags: Array.isArray(settings.tags) ? settings.tags.filter((t) => typeof t === 'string') : [],
+    order: settings.order === 'sorted' ? 'sorted' : 'random',
+    ...(['choice', 'fill'].includes(settings.mode) && { mode: settings.mode }),
+  };
+}
+
 function fileHeader(table, fields) {
+  const codes = new Map(fields.map((f) => [f.id, f.code]));
   return {
     app: APP,
     version: VERSION,
     title: table.title,
     description: table.description,
     fields: fields.map(({ code, name, type, required, showInList }) => ({ code, name, type, required, showInList })),
+    flashcard: mapSettings(table.flashcard, codes),
+    quiz: mapSettings(table.quiz, codes),
   };
 }
 
@@ -185,7 +203,18 @@ export function parseTableFile(payload) {
   if (!keyField(fields)) throw new Error('檔案至少要有一個欄位');
   if (!fields.some((f) => f.showInList)) fields[0].showInList = true;
 
-  return { title, description: String(payload.description ?? '').trim(), fields };
+  const ids = new Map(fields.map((f) => [f.code, f.id]));
+  const flashcard = mapSettings(payload.flashcard, ids);
+  const quiz = mapSettings(payload.quiz, ids);
+  if (flashcard && !Array.isArray(flashcard.back)) flashcard.back = flashcard.back ? [flashcard.back] : [];
+  if (quiz && Array.isArray(quiz.back)) quiz.back = quiz.back[0] ?? null;
+  return {
+    title,
+    description: String(payload.description ?? '').trim(),
+    fields,
+    ...(flashcard && { flashcard }),
+    ...(quiz && { quiz }),
+  };
 }
 
 export async function readJsonFile(file) {

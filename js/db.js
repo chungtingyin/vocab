@@ -74,16 +74,16 @@ export async function createTable(table, rows = [], records = []) {
   return id;
 }
 
-// 同時清掉被刪除欄位的資料
-export async function saveTable(table, removedFieldIds = []) {
+// updateRow 會在同一個交易裡套用到每一筆資料，例如清掉被刪除的欄位
+export async function saveTable(table, updateRow = null) {
   const db = await open();
   const tx = db.transaction(['tables', 'rows'], 'readwrite');
   tx.objectStore('tables').put(table);
-  if (removedFieldIds.length) {
+  if (updateRow) {
     const store = tx.objectStore('rows');
     const rows = await result(store.index('tableId').getAll(table.id));
     for (const row of rows) {
-      for (const id of removedFieldIds) delete row.values[id];
+      updateRow(row);
       store.put(row);
     }
   }
